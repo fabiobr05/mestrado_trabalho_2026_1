@@ -1,0 +1,14 @@
+q1	subgraph matching algorithms for graph databases
+q2	query optimization techniques for property graph databases
+q3	Cypher query language semantics and optimization
+q4	SPARQL query processing over RDF graphs
+q5	cost-based query optimization for graph databases
+q6	survey of graph query languages
+q7	join order optimization for graph pattern matching
+q8	index structures for accelerating graph queries
+q9	distributed query processing over large-scale graphs
+q10	benchmarking graph database query performance
+q11	learned query optimizers for graph databases
+q12	approximate query processing on graph databases
+q13	query rewriting techniques for graph databases
+q14	performance evaluation of graph database management systems

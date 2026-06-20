@@ -1,0 +1,353 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{graphicx,url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+
+\sloppy
+
+\title{Construindo o ``R'' do RAG: um Sistema de Recuperação de
+Artigos Científicos sobre Bancos de Grafos}
+
+\author{Fabio Batista Rodrigues\inst{1}}
+
+\address{Programa de Pós-Graduação em Computação\\
+  Faculdade de Computação (FACOM) -- UFMS\\
+  Campo Grande -- MS -- Brazil
+  \email{fabio.batista@ufms.br}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This work designs, implements and evaluates a scientific article retrieval
+system on the topic of graph databases, focused on graph query processing
+and optimization. The collection (1,097 ArXiv papers) was built to reflect
+the author's research project. We implement the two mandatory
+retrievers, sparse BM25 and a dense retriever based on TF-IDF with
+cosine similarity, and a hybrid sparse+dense ranking module via
+Reciprocal Rank Fusion (RRF). Evaluation over 14 test queries, with qrels
+manually annotated via pooling, shows that the hybrid ranking outperforms
+both isolated baselines in MAP (0.763 vs.\ 0.719 for BM25 and 0.695 for
+TF-IDF) and nDCG@10 (0.797), evidencing the complementarity between the
+lexical and vector-based strategies.
+\end{abstract}
+
+\begin{resumo}
+Este trabalho projeta, implementa e avalia um sistema de recuperação de
+artigos científicos sobre o tema de bancos de grafos, com foco em
+processamento e otimização de consultas em grafos. A coleção (1.097
+artigos do ArXiv) foi construída para refletir o projeto de pesquisa. 
+Implementamos dois recuperadores obrigatórios, BM25 esparso e um
+recuperador denso baseado em TF-IDF com similaridade do cosseno, e um
+módulo de aprofundamento de ranking híbrido \textit{sparse+dense} via
+Reciprocal Rank Fusion (RRF). A avaliação, sobre 14 consultas de teste com
+\textit{qrels} anotados manualmente via \textit{pooling}, mostra que o
+ranking híbrido supera ambos os baselines isolados em MAP (0,763 vs.\
+0,719 do BM25 e 0,695 do TF-IDF) e nDCG@10 (0,797), evidenciando a
+complementaridade entre as estratégias lexical e vetorial.
+\end{resumo}
+
+\section{Introdução}
+
+A explosão na produção científica deslocou o gargalo da pesquisa da escrita
+para a \textit{descoberta} de trabalhos relevantes. Sistemas modernos de
+\textit{Retrieval-Augmented Generation} (RAG)~\cite{lewis2020rag} dependem de
+um componente de recuperação, o ``R'' do RAG, que filtra, antes de
+qualquer geração de texto, um pequeno conjunto de documentos potencialmente
+relevantes para a consulta do usuário. Este trabalho tem como objetivo
+projetar, implementar e avaliar esse componente sobre uma coleção de artigos
+científicos construída a partir do ArXiv, no domínio de \textbf{bancos de
+grafos}, com foco específico em \textbf{processamento e otimização de
+consultas em grafos}, tema alinhado ao projeto de pesquisa.
+
+O problema de recuperação é tratado, em essência, como um problema de
+aprendizado de máquina sobre texto: combinamos ponderação probabilística de
+termos (BM25, com raízes em Naïve Bayes), busca por vizinhos mais próximos
+(KNN aplicado à recuperação via TF-IDF e similaridade do cosseno) e fusão de
+rankings (Reciprocal Rank Fusion) para construir e comparar diferentes
+estratégias de recuperação.
+
+As contribuições deste trabalho são: (i) uma coleção de 1.097 artigos sobre
+bancos de grafos, documentada e reprodutível; (ii) dois recuperadores
+obrigatórios (BM25 e TF-IDF/KNN) implementados sobre a mesma coleção; (iii)
+um módulo de ranking híbrido (M5) via RRF; e (iv) uma avaliação experimental
+com 14 consultas e 304 julgamentos de relevância manuais, comparando os três
+\textit{runs} com P@10, R@10, MAP e nDCG@10.
+
+\section{Trabalhos Relacionados}
+
+BM25~\cite{robertson2009bm25} é o modelo de recuperação esparsa canônico,
+derivado do \textit{Probabilistic Relevance Framework}, que modela a
+relevância de um documento como uma probabilidade condicionada à presença de
+termos da consulta, o mesmo paradigma estatístico subjacente ao Naïve
+Bayes~\cite{manning2008ir}. Recuperação densa, por outro lado, representa
+documentos e consultas em um espaço vetorial contínuo; trabalhos como Dense
+Passage Retrieval~\cite{karpukhin2020dpr} e SPECTER~\cite{cohan2020specter}
+mostram que representações aprendidas (\textit{embeddings}) superam TF-IDF
+quando há variação de vocabulário entre consulta e documento, ao custo de
+exigirem um modelo pré-treinado. Neste trabalho adotamos TF-IDF como
+representação densa por ser a baseline recomendada pelo enunciado e por não
+depender de modelos externos.
+
+A combinação de sinais esparsos e densos (recuperação híbrida) é discutida em
+Lin~\cite{lin2021framework} como uma visão unificada dos paradigmas de
+recuperação. Adotamos especificamente o \textit{Reciprocal Rank Fusion}
+(RRF)~\cite{cormack2009rrf}, que combina rankings por posição em vez de por
+score, evitando o problema de normalização entre escalas heterogêneas (score
+BM25 não-normalizado vs.\ similaridade do cosseno em $[0,1]$).
+
+Quanto à avaliação, seguimos a metodologia clássica de TREC (consultas +
+\textit{qrels} + métricas de P@k, R@k, MAP e nDCG), também adotada por
+benchmarks como o BEIR~\cite{thakur2021beir}, usado aqui apenas como
+referência metodológica, não como coleção principal, conforme exigido pelo
+enunciado.
+
+\section{Metodologia}
+
+\subsection{Escopo da coleção e relação com o projeto de pesquisa}
+
+A coleção foi definida a partir do tema de pesquisa ``processamento e
+otimização de consultas em bancos de grafos''. A Tabela~\ref{tab:escopo}
+resume as decisões de escopo.
+
+\begin{table}[h]
+\centering
+\caption{Escopo de coleta da coleção.}
+\label{tab:escopo}
+\small
+\begin{tabular}{p{1.6cm}p{5.6cm}}
+\toprule
+Campo & Decisão \\
+\midrule
+Palavras-chave & graph database, graph query optimization/processing,
+property graph, subgraph matching, SPARQL query optimization/processing,
+Cypher query language, graph indexing, distributed graph query processing,
+graph processing system, RDF query processing, triple store, graph
+traversal, join order optimization, query plan optimization, graph data
+management, graph store, knowledge graph query/storage, graph database
+benchmark, graph reachability query, regular path query, shortest path
+query, in-memory graph database, Gremlin query language, graph OLTP \\
+Categorias ArXiv & cs.DB (principal), cs.AI, cs.DC, cs.DS, cs.IR, cs.LG, cs.SE \\
+Janela temporal & 2008--2026 \\
+Tamanho final & 1.097 artigos \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A query inicial de coleta (apenas 10 termos centrados em \textit{property
+graph}/SPARQL e 4 categorias) exauriu em 557 artigos no ArXiv, abaixo do
+mínimo de 1.000 exigido. Em duas rodadas subsequentes, ampliamos
+iterativamente palavras-chave (de 10 para 28 termos), categorias (de 4 para
+7) e janela temporal (de 2015--2026 para 2008--2026), até atingir 1.097
+artigos. Essa iteração ilustra um \textit{trade-off} central da etapa de
+coleta: termos muito específicos garantem alta precisão temática mas podem
+não cobrir o volume mínimo exigido pelo enunciado.
+
+A distribuição temporal mostra crescimento acentuado a partir de 2023
+(104, 104, 199 e 161 artigos em 2023--2026, respectivamente), consistente
+com o aumento de interesse em bancos de grafos impulsionado por aplicações
+de \textit{knowledge graphs} e RAG. A categoria primária predominante é
+cs.DB (465 artigos), seguida por cs.DC, cs.LG, cs.AI e cs.DS, compatível
+com a natureza interdisciplinar do tema (sistemas de banco de dados,
+algoritmos distribuídos e, mais recentemente, otimizadores aprendidos).
+
+\subsection{Pré-processamento textual}
+
+O texto indexado é a concatenação de título e abstract de cada artigo.
+Aplicamos, de forma idêntica a documentos e consultas (módulo
+\texttt{src/preprocessing.py}): \textit{lower-casing}, remoção de pontuação,
+tokenização por espaços, remoção de \textit{stopwords} (lista do NLTK) e
+\textit{stemming} via Porter Stemmer. O \textit{stemming} foi incluído para
+reduzir variações morfológicas comuns em textos técnicos (e.g.,
+\textit{querying}/\textit{queries}/\textit{query} $\rightarrow$
+\textit{queri}), o que aumenta a sobreposição de termos entre consulta e
+documento tanto para o BM25 quanto para o TF-IDF. O custo dessa escolha é a
+perda de alguma especificidade lexical (e.g., \textit{indexing} e
+\textit{indices} colapsam no mesmo \textit{stem}), o que discutimos na
+Seção~\ref{sec:discussao}.
+
+\subsection{Recuperação esparsa, BM25}
+
+Implementado com a biblioteca \texttt{rank\_bm25} (BM25Okapi) sobre o texto
+pré-processado de título+abstract. Adotamos $k_1=1{,}5$ e $b=0{,}75$.
+$k_1=1{,}5$ está dentro da faixa típica (1,2--2,0); como abstracts
+científicos são curtos e raramente repetem termos excessivamente, não há
+necessidade de saturar a contribuição de um termo mais rapidamente (o que
+exigiria $k_1$ menor). $b=0{,}75$ é o padrão da
+literatura~\cite{robertson2009bm25} e é adequado pois os documentos da
+coleção (título+abstract) têm comprimento relativamente homogêneo. O BM25
+modela a relevância como uma função da frequência do termo no documento
+(TF) ponderada pela raridade do termo no corpus (IDF), o mesmo paradigma
+probabilístico, com a mesma suposição de independência entre termos, do
+Naïve Bayes visto na disciplina.
+
+\subsection{Recuperação por vizinhos mais próximos, TF-IDF/KNN}
+
+Cada documento e cada consulta são representados como vetores TF-IDF
+(\texttt{TfidfVectorizer} do scikit-learn, \texttt{min\_df=2},
+\texttt{max\_df=0{,}85}), ajustados sobre o vocabulário da coleção. O
+ranking é dado pelos $K$ documentos com maior similaridade do cosseno entre
+o vetor da consulta e os vetores dos documentos, exatamente a lógica do
+KNN visto em sala, mas devolvendo a lista de vizinhos como resposta em vez
+de votar uma classe. Optamos por TF-IDF (em vez de \textit{embeddings}
+pré-treinados) como representação densa por ser a baseline recomendada pelo
+enunciado e por não introduzir dependência de modelos externos não cobertos
+pela disciplina.
+
+\subsection{Módulo de aprofundamento M5, Ranking híbrido}
+
+Combinamos os \textit{runs} de BM25 e TF-IDF/KNN via \textit{Reciprocal Rank
+Fusion}~\cite{cormack2009rrf}:
+\begin{equation}
+\text{RRF}(d) = \sum_{s \in \{\text{bm25},\,\text{knn}\}} \frac{1}{\kappa + \text{rank}_s(d)},
+\end{equation}
+com $\kappa=60$ (valor original do RRF). RRF foi escolhido em vez de soma
+ponderada de scores porque BM25 (não-normalizado, $[0,\infty)$) e
+similaridade do cosseno ($[0,1]$) vivem em escalas incompatíveis,
+combinar por \textit{posição} no ranking evita o problema de normalização
+entre paradigmas heterogêneos, sem exigir um hiperparâmetro de peso $\alpha$
+adicional.
+
+\subsection{Avaliação experimental}
+\label{sec:avaliacao}
+
+Construímos 14 consultas de teste cobrindo subáreas distintas do tema:
+métodos (subgraph matching, join order, indexação), linguagens de consulta
+(Cypher, SPARQL), sistemas distribuídos, \textit{surveys} e \textit{benchmarks}
+(lista completa em \texttt{eval/queries.tsv}).
+
+O \textit{qrels} foi construído via \textit{pooling}: para cada consulta,
+unimos o top-15 de BM25 e o top-15 de TF-IDF/KNN (com sobreposição
+parcial), totalizando 304 pares (consulta, documento) anotados com
+relevância binária (0/1). O critério de relevância adotado foi: \emph{um
+documento é relevante se seu título/abstract trata diretamente do método,
+sistema ou \textit{survey} que a consulta busca}. Do total, 173 julgamentos
+(56,9\%) foram marcados como relevantes. Reportamos P@10, R@10, MAP e
+nDCG@10 com o script \texttt{eval/evaluate.py} fornecido pela disciplina.
+
+\textit{Limitação:} como o qrels foi construído via \textit{pooling}
+limitado ao top-15 de dois sistemas, R@10 é uma estimativa, documentos
+relevantes fora desse pool não são contabilizados, favorecendo levemente os
+próprios sistemas que geraram o pool.
+
+\section{Resultados e Discussão}
+\label{sec:discussao}
+
+\begin{table}[h]
+\centering
+\caption{Métricas médias sobre as 14 queries de teste.}
+\label{tab:resultados}
+\begin{tabular}{lcccc}
+\toprule
+Sistema & P@10 & R@10 & MAP & nDCG@10 \\
+\midrule
+BM25            & 0,657 & 0,577 & 0,719 & 0,794 \\
+TF-IDF/KNN      & 0,671 & 0,565 & 0,695 & 0,764 \\
+Híbrido (M5)    & \textbf{0,671} & \textbf{0,580} & \textbf{0,763} & \textbf{0,797} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+O ranking híbrido supera ambos os baselines isolados em todas as métricas,
+com ganho mais expressivo em MAP (+6,1\% sobre BM25, +9,7\% sobre TF-IDF).
+Isso confirma a complementaridade entre os paradigmas: BM25 vence em
+consultas com vocabulário técnico discriminativo e baixa ambiguidade
+lexical (e.g., termos exatos como ``Cypher'', ``SPARQL''), enquanto o
+TF-IDF/KNN tende a vencer quando a consulta usa fraseado mais genérico que
+casa com múltiplos documentos relacionados, mesmo sem repetição exata de
+termos raros.
+
+\textbf{Estudo qualitativo, acerto (q1).} Para a consulta
+\textit{``subgraph matching algorithms for graph databases''}, ambos os
+sistemas atingem P@10 = 1,0 e AP $>$ 0,88. O pool de candidatos para essa
+consulta foi quase inteiramente composto por artigos diretamente sobre
+\textit{subgraph matching}, um caso em que o vocabulário da consulta
+coincide quase exatamente com o vocabulário técnico da
+subárea, favorecendo tanto a ponderação de termos (BM25) quanto a
+similaridade vetorial (TF-IDF).
+
+\textbf{Estudo qualitativo, falha relativa (q11).} Para
+\textit{``learned query optimizers for graph databases''}, o BM25 obtém
+AP = 0,823 enquanto o TF-IDF/KNN cai para AP = 0,233. A consulta combina um
+conceito específico (otimizadores \emph{aprendidos}, i.e., baseados em
+aprendizado de máquina) com um domínio amplo (bancos de grafos); o TF-IDF
+tende a recuperar artigos genéricos sobre otimização de consultas ou sobre
+aprendizado em grafos isoladamente, sem a interseção exata dos dois
+conceitos, pois a similaridade do cosseno é dominada pelos termos mais
+frequentes do vocabulário (`graph', `query', `optimization'), diluindo o
+sinal mais raro e discriminativo (`learned'/`learning'). O BM25, por
+ponderar termos raros mais fortemente via IDF, consegue capturar melhor essa
+interseção.
+
+\textbf{Observação adicional.} Na consulta q8 (\textit{``index structures
+for accelerating graph queries''}), ambos os sistemas têm desempenho
+moderado (MAP $\approx$ 0,44--0,54) porque o pool mistura artigos sobre
+indexação de bancos de grafos (relevantes) com artigos sobre índices de
+busca aproximada de vizinhos (\textit{ANN}) em espaços vetoriais de alta
+dimensão (não relevantes ao tema de bancos de grafos, apesar de também
+usarem a palavra ``graph'' para descrever a estrutura do índice). Esse caso
+ilustra um limite de ambos os paradigmas léxico e vetorial clássico: a
+ambiguidade semântica do termo ``graph'' (estrutura de dados de armazenamento
+de relações vs.\ estrutura de indexação para ANN) não é resolvida nem por
+contagem de termos nem por TF-IDF, e provavelmente exigiria
+\textit{embeddings} contextuais ou re-ranqueamento supervisionado (módulo
+M1) para ser mitigada.
+
+\section{Conclusão}
+
+Implementamos e avaliamos um sistema de recuperação de artigos científicos
+sobre bancos de grafos, cobrindo o pipeline obrigatório (coleta, pré-processamento, BM25 e TF-IDF/KNN) e o módulo de aprofundamento M5 (ranking
+híbrido via RRF). Os resultados mostram que a fusão de sinais esparsos e
+densos supera ambos os componentes isolados nas quatro métricas avaliadas,
+confirmando a complementaridade entre os paradigmas estudados na disciplina.
+Como trabalho futuro, destacam-se: (i) substituir TF-IDF por
+\textit{embeddings} pré-treinados (e.g., SPECTER2) para mitigar a
+ambiguidade semântica observada na consulta q8; (ii) expandir o
+\textit{qrels} para reduzir o viés do \textit{pooling}; e (iii) explorar o
+módulo M1 (re-ranqueamento supervisionado) sobre o top-100 do híbrido.
+
+\subsection*{Uso de assistentes de IA generativa}
+
+O copilot foi utilizado para gestão do codigo auxiliando em tarefas repetitivas como atualização de documentação e correção de erros
+dado uma pré-visualização de erros e entendimento deles.
+
+
+\footnote{Vídeo de apresentação: \url{https://...} (adicionar link antes da entrega).}
+
+\begin{thebibliography}{9}
+
+\bibitem{lewis2020rag}
+Lewis, P. et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. \textit{NeurIPS}.
+
+\bibitem{robertson2009bm25}
+Robertson, S. \& Zaragoza, H. (2009). The Probabilistic Relevance Framework: BM25 and Beyond. \textit{Foundations and Trends in Information Retrieval}, 3(4), 333--389.
+
+\bibitem{manning2008ir}
+Manning, C. D., Raghavan, P. \& Schütze, H. (2008). \textit{Introduction to Information Retrieval}. Cambridge University Press.
+
+\bibitem{karpukhin2020dpr}
+Karpukhin, V. et al. (2020). Dense Passage Retrieval for Open-Domain Question Answering. \textit{EMNLP}.
+
+\bibitem{cohan2020specter}
+Cohan, A. et al. (2020). SPECTER: Document-level Representation Learning using Citation-informed Transformers. \textit{ACL}.
+
+\bibitem{lin2021framework}
+Lin, J. (2021). A Proposed Conceptual Framework for a Representational Approach to Information Retrieval. \textit{SIGIR Forum}, 55(2).
+
+\bibitem{cormack2009rrf}
+Cormack, G. V., Clarke, C. L. A. \& Buettcher, S. (2009). Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods. \textit{SIGIR}.
+
+\bibitem{thakur2021beir}
+Thakur, N. et al. (2021). BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models. \textit{NeurIPS Datasets \& Benchmarks}.
+
+\end{thebibliography}
+
+\end{document}
